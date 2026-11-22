@@ -1,0 +1,40 @@
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Moi truong Python
+venv/
+.venv/
+env/
+.env
+.env.*
+
+# Log tu dong tao
+logs/
+*.log
+
+# File ket qua in va dau ra
+output/
+*.pdf
+
+# Du lieu phat sinh khi chay chuong trinh
+shared_data/blockchain.json
+shared_data/votes.json
+shared_data/shared_data.txt
+shared_data/token_status.json
+shared_data/clock_node_*.json
+shared_data/node_data/
+shared_data/vote_history/
+
+# Bieu do benchmark tu dong tao
+benchmark/charts/
+
+# File tam cua Windows va editor
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.bak
+.vscode/

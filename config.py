@@ -1,0 +1,9 @@
+# config.py
+TOTAL_NODES = 6
+HOSTS = ['127.0.0.1'] * TOTAL_NODES 
+PORTS = [5001, 5002, 5003, 5004, 5005, 5006]
+
+TOKEN_SPEED = 1.0 
+TOKEN_HOLD_TIMEOUT = 30  # <-- Tăng lên 30 giây
+TOKEN_LOST_TIMEOUT = 30  # <-- Tăng lên 30 giây
+SOCKET_TIMEOUT = 3
