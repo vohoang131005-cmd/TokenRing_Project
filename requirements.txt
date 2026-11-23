@@ -1,0 +1,4 @@
+colorama
+prompt_toolkit
+reportlab
+matplotlib

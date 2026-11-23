@@ -45,9 +45,6 @@ def log(node_id, message, level="INFO"):
     # Loc thong bao gui Token thanh cong
     noi_dung_chuan = chuan_hoa_chuoi(noi_dung)
 
-    if "da gui token toi node" in noi_dung_chuan:
-        return
-
     thoi_gian = datetime.now().strftime("%H:%M:%S")
 
     dong_log = f"[{thoi_gian}] [Node {node_id}] {noi_dung}"
@@ -79,6 +76,6 @@ def log(node_id, message, level="INFO"):
             ) as tep:
 
                 tep.write(dong_log + "\n")
-
+                tep.flush()
         except OSError:
             pass

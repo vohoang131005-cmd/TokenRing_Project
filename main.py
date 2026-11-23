@@ -10,18 +10,19 @@ from config import TOTAL_NODES, TOKEN_SPEED
 from core.socket_handler import send_packet, start_server, broadcast_status
 from core.critical_section import access_critical_section
 
-# Import các module Fault Tolerance
 from fault_tolerance.watchdog import Watchdog
 from fault_tolerance.token_lost import TokenLostDetector
 from fault_tolerance.token_duplicate import resolve_token_conflict
 from fault_tolerance.bypass import handle_bypass
-from fault_tolerance.membership import send_join_request, handle_join_request
+from fault_tolerance.membership import (
+    send_join_request,
+    handle_join_request,
+    handle_leave_request
+)
 
-# Import các module Distributed Properties
 from distributed_properties.lamport_clock import LamportClock
 from distributed_properties.vector_clock import VectorClock
 
-# Import các ứng dụng
 from applications.app_vote import vote
 from applications.app_print import print_document
 from applications.app_file import write_shared_file
@@ -56,7 +57,7 @@ class Node:
 
         self.lamport = LamportClock()
         self.vector_clock = VectorClock(node_id, TOTAL_NODES)
-        
+
         self.shared_dir = "shared_data"
         os.makedirs(self.shared_dir, exist_ok=True)
 
@@ -67,6 +68,7 @@ class Node:
         self.ui = TerminalUI(self.node_id, self.handle_user_input)
 
         self.luu_clock()
+        self.heartbeat_file = os.path.join(self.shared_dir, f"heartbeat_node_{self.node_id}.json")
 
     def luu_clock(self):
         try:
@@ -83,6 +85,16 @@ class Node:
         except Exception as e:
             logger.log(self.node_id, f"Loi luu Clock: {e}", "WARNING")
 
+    def ghi_heartbeat(self):
+        try:
+            du_lieu = {"node_id": self.node_id, "timestamp": time.time()}
+            file_tam = self.heartbeat_file + ".tmp"
+            with open(file_tam, "w", encoding="utf-8") as f:
+                json.dump(du_lieu, f)
+            os.replace(file_tam, self.heartbeat_file)
+        except Exception:
+            pass
+
     def dashboard_token_holder(self, holder_id):
         try:
             du_lieu = {
@@ -95,9 +107,18 @@ class Node:
 
             with open(file_tam, "w", encoding="utf-8") as f:
                 json.dump(du_lieu, f, ensure_ascii=False)
-            os.replace(file_tam, file_chinh)
+            
+            # Thêm đoạn này để tránh tranh chấp file trên Windows
+            for _ in range(3):
+                try:
+                    os.replace(file_tam, file_chinh)
+                    break
+                except PermissionError:
+                    time.sleep(0.1)
+                    
         except Exception as e:
-            logger.log(self.node_id, f"Loi cap nhat trang thai Token: {e}", "WARNING")
+            # Bỏ qua lỗi này, không in ra log để đỡ rối
+            pass
 
     def handle_user_input(self, msg):
         if self.is_frozen:
@@ -112,10 +133,10 @@ class Node:
         threading.Thread(target=start_server, args=(self.node_id, self.process_packet), daemon=True).start()
         threading.Thread(target=self.watchdog.run, daemon=True).start()
         threading.Thread(target=self.token_lost_detector.run, daemon=True).start()
+        threading.Thread(target=self._heartbeat_loop, daemon=True).start()
 
         logger.log(self.node_id, f"Node da khoi dong.", "SUCCESS")
 
-        # Gửi yêu cầu JOIN nếu không phải Node 0
         if self.node_id != 0:
             send_join_request(self.node_id, TOTAL_NODES)
 
@@ -124,24 +145,36 @@ class Node:
 
         self.ui.run()
 
+    def _heartbeat_loop(self):
+        while True:
+            self.ghi_heartbeat()
+            time.sleep(5)
+
     def process_packet(self, packet):
         if self.is_frozen:
             return
 
         packet_type = packet.get("type")
 
-        # Xử lý Node Join
         if packet_type == "JOIN":
             joining_node = packet["node_id"]
             self.lamport.tick()
             self.vector_clock.tick()
             self.luu_clock()
-            
-            # Gọi hàm từ membership.py
-            self.next_node = handle_join_request(self.node_id, joining_node)
+            self.next_node = handle_join_request(self.node_id, joining_node, TOTAL_NODES)
             return
 
-        # Cập nhật trạng thái Token
+        if packet_type == "JOIN_ACK":
+            self.next_node = packet["next_node"]
+            logger.log(self.node_id, f"Da cap nhat next_node = {self.next_node} sau JOIN_ACK.", "SUCCESS")
+            return
+
+        if packet_type == "LEAVE":
+            leaving_node = packet["node_id"]
+            self.next_node = handle_leave_request(self.node_id, leaving_node, TOTAL_NODES)
+            logger.log(self.node_id, f"Da cap nhat next_node = {self.next_node} sau LEAVE.", "WARNING")
+            return
+
         if packet_type == "STATUS_UPDATE":
             holder = packet["token_holder"]
             if self._last_holder == holder:
@@ -154,9 +187,17 @@ class Node:
                 self.ui.update_status(f"DANG DOI TOKEN (Token o Node {holder})", False)
             return
 
-        # Nhận Token
         if packet_type == "TOKEN":
-            self.token = resolve_token_conflict(self.node_id, self.token, packet)
+            old_uuid = self.token.get("uuid", "init")
+            self.token, incoming_discarded = resolve_token_conflict(self.node_id, self.token, packet)
+            new_uuid = self.token.get("uuid", "init")
+
+            # Neu Token hien tai bi huy (UUID thay doi) va node khong giu Token,
+            # gui Token hop le di tiep de khong mat Token khoi vong
+            if old_uuid != new_uuid and not self.is_holding_token:
+                logger.log(self.node_id, "Token cu bi huy, gui Token hop le di tiep.", "WARNING")
+                self.send_token()
+                return
 
             if "lamport_time" in packet:
                 self.lamport.update(packet["lamport_time"])
@@ -168,7 +209,7 @@ class Node:
             self.luu_clock()
             self.token_lost_detector.update_last_seen()
             self._last_holder = self.node_id
-            
+
             self.dashboard_token_holder(self.node_id)
             broadcast_status(self.node_id, self.node_id)
 
@@ -179,7 +220,6 @@ class Node:
             )
             self.ui.update_status("DANG GIU TOKEN (San sang ghi)", True)
 
-            # Vào vùng găng nếu có dữ liệu
             if not self.data_queue.empty():
                 self.is_holding_token = True
                 self.token["status"] = "BUSY"
@@ -196,23 +236,32 @@ class Node:
                         while True:
                             time.sleep(1)
 
+                    elif data.strip().upper() == "LEAVE":
+                        from fault_tolerance.membership import send_leave_request
+                        logger.log(self.node_id, "DANG GUI YEU CAU LEAVE...", "WARNING")
+                        send_leave_request(self.node_id, TOTAL_NODES)
+                        self.ui.update_status("DA ROI MANG...", False)
+                        self.is_frozen = True 
+                        time.sleep(2)
+                        os._exit(0)
+
                     elif data.strip().upper().startswith("VOTE"):
                         parts = data.strip().upper().split()
                         if len(parts) >= 2:
                             vote(self.node_id, parts[-1])
                         else:
                             logger.log(self.node_id, "Cu phap: VOTE A hoac VOTE B", "WARNING")
-                            
+
                     elif data.strip().upper().startswith("PRINT"):
                         parts = data.strip().upper().split()
                         if len(parts) >= 2 and parts[1] == "VOTE":
                             print_document(self.node_id, "VOTE")
                         else:
                             print_document(self.node_id, "DATA")
-                            
+
                     elif data.strip().upper().startswith("GAME"):
                         play_game(self.node_id, data)
-                        
+
                     elif data.strip().upper().startswith("BLOCK"):
                         transaction = data.strip()[5:].strip()
                         if transaction:
@@ -224,6 +273,7 @@ class Node:
                         write_shared_file(self.node_id, data)
 
                 if self.is_holding_token:
+                    logger.log(self.node_id, "DA RA KHOI VUNG GANG (Hoan tat)", "SUCCESS") # <-- THÊM DÒNG NÀY
                     self.release_token()
             else:
                 self.send_token()
@@ -236,37 +286,41 @@ class Node:
             self.ui.update_status("DANG DOI TOKEN...", False)
             self.send_token()
 
-    def send_token(self):
-        if not self.is_holding_token:
-            time.sleep(TOKEN_SPEED)
+    def send_token(self, bypass_count=0):
+        if self.is_holding_token:
+            return
 
-            self.token["lamport_time"] = self.lamport.tick()
-            self.token["vector_clock"] = self.vector_clock.tick()
-            self.luu_clock()
-            self.token["holder_id"] = self.next_node
+        if bypass_count >= TOTAL_NODES - 1:
+            logger.log(self.node_id, "TAT CA NODE DEU CHET! Dung gui Token.", "ERROR")
+            return
 
-            max_retries = 3
-            success = False
+        time.sleep(TOKEN_SPEED)
 
-            for attempt in range(max_retries):
-                success = send_packet(self.node_id, self.next_node, self.token)
-                if success:
-                    logger.log(self.node_id, f"Da gui Token toi Node {self.next_node}.", "INFO")
-                    break
-                if attempt < max_retries - 1:
-                    time.sleep(1)
+        self.token["lamport_time"] = self.lamport.tick()
+        self.token["vector_clock"] = self.vector_clock.tick()
+        self.luu_clock()
+        self.token["holder_id"] = self.next_node
 
-            if not success:
-                # Gọi hàm từ bypass.py
-                self.next_node = handle_bypass(
-                    self.node_id, 
-                    self.next_node, 
-                    TOTAL_NODES, 
-                    self.ui.update_status
-                )
-                self._last_holder = self.next_node
-                broadcast_status(self.node_id, self.next_node)
-                self.send_token()
+        max_retries = 3
+        success = False
+
+        for attempt in range(max_retries):
+            success = send_packet(self.node_id, self.next_node, self.token)
+            if success:
+                break
+            if attempt < max_retries - 1:
+                time.sleep(1)
+
+        if not success:
+            self.next_node = handle_bypass(
+                self.node_id,
+                self.next_node,
+                TOTAL_NODES,
+                self.ui.update_status
+            )
+            self._last_holder = self.next_node
+            broadcast_status(self.node_id, self.next_node)
+            self.send_token(bypass_count + 1)
 
 
 if __name__ == "__main__":

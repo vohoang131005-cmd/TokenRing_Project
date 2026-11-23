@@ -21,12 +21,15 @@ class Watchdog:
         while self.running:
             if self.start_time is not None:
                 elapsed = time.time() - self.start_time
-                # Đếm ngược 30 giây
                 if elapsed > TOKEN_HOLD_TIMEOUT:
-                    log(self.node_id, f"WATCHDOG: Đã hết 30s giữ Token! Tự động nhả để nhường cho máy khác...", "ERROR")
+                    log(self.node_id, f"WATCHDOG: Da het {TOKEN_HOLD_TIMEOUT}s giu Token! Tu dong nha...", "ERROR")
                     self.force_release()
             time.sleep(1)
 
     def force_release(self):
         self.stop_timer()
+        # Khong giai phong neu node dang bi treo cung
+        if getattr(self.node, 'is_frozen', False):
+            log(self.node_id, "WATCHDOG: Node dang treo cung, khong the giai phong!", "ERROR")
+            return
         self.node.release_token()
