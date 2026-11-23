@@ -38,3 +38,9 @@ desktop.ini
 *.tmp
 *.bak
 .vscode/
+
+
+shared_data/heartbeat_*.json
+shared_data/token_status.json
+shared_data/clock_*.json
+shared_data/shared_data.txt
