@@ -24,22 +24,26 @@ def send_packet(node_id, to_node_id, packet):
             client.close()
 
 
-def broadcast_status(sender_id, current_token_holder):
-    # Thêm timestamp vào gói tin để chống nhảy loạn
+def broadcast_status(sender_id, current_token_holder, lamport_time=0):
+    # Thêm timestamp và lamport_time vào gói tin để chống nhảy loạn
     packet = {
         "type": "STATUS_UPDATE",
         "token_holder": current_token_holder,
         "sender_id": sender_id,
-        "timestamp": time.time()  # <-- THÊM DÒNG NÀY
+        "lamport_time": lamport_time,
+        "timestamp": time.time()
     }
+
+    def _send(target_id):
+        try:
+            send_packet(sender_id, target_id, packet)
+        except Exception:
+            pass
 
     for i in range(TOTAL_NODES):
         if i == sender_id:
             continue
-        try:
-            send_packet(sender_id, i, packet)
-        except Exception:
-            pass
+        threading.Thread(target=_send, args=(i,), daemon=True).start()
 
 
 def handle_connection(conn, addr, callback, node_id):
@@ -61,15 +65,26 @@ def handle_connection(conn, addr, callback, node_id):
         conn.close()
 
 
-def start_server(node_id, callback):
+def start_server(node_id, callback, is_frozen_fn=None):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("0.0.0.0", PORTS[node_id]))
     server.listen(50)
+    server.settimeout(1.0)
     log(node_id, f"Dang lang nghe tai port {PORTS[node_id]}...", "SUCCESS")
-    while True:
-        try:
-            conn, addr = server.accept()
-            threading.Thread(target=handle_connection, args=(conn, addr, callback, node_id), daemon=True).start()
-        except Exception as e:
-            log(node_id, f"Loi server: {e}", "ERROR")
+    try:
+        while True:
+            if is_frozen_fn and is_frozen_fn():
+                break
+            try:
+                conn, addr = server.accept()
+                if is_frozen_fn and is_frozen_fn():
+                    conn.close()
+                    break
+                threading.Thread(target=handle_connection, args=(conn, addr, callback, node_id), daemon=True).start()
+            except socket.timeout:
+                continue
+            except Exception as e:
+                log(node_id, f"Loi server: {e}", "ERROR")
+    finally:
+        server.close()

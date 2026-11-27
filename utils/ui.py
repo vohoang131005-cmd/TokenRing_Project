@@ -23,6 +23,7 @@ class TerminalUI:
         self.status_text = "Dang khoi dong..."
         self.is_holding = False
         self.log_lines = []
+        self._lock = threading.Lock()
 
         # Thong tin ky thuat
         self.lamport_time = 0
@@ -114,31 +115,38 @@ class TerminalUI:
         return FormattedText(formatted)
 
     def _get_status_text(self):
+        with self._lock:
+            is_holding = self.is_holding
+            status_text = self.status_text
 
-        if self.is_holding:
+        if is_holding:
             return FormattedText([
                 (
                     "class:status-holding",
-                    f" DANG GIU TOKEN - {self.status_text} "
+                    f" DANG GIU TOKEN - {status_text} "
                 )
             ])
 
         return FormattedText([
             (
                 "class:status-waiting",
-                f" {self.status_text} "
+                f" {status_text} "
             )
         ])
 
     def _get_tech_text(self):
+        with self._lock:
+            lamport_time = self.lamport_time
+            token_uuid = self.token_uuid
+            vector_clock = list(self.vector_clock)
 
         vector_text = ", ".join(
-            str(x) for x in self.vector_clock
+            str(x) for x in vector_clock
         )
 
         lines = [
-            f"Lamport:\n{self.lamport_time}",
-            f"\nUUID Token:\n{str(self.token_uuid)[:8]}...",
+            f"Lamport:\n{lamport_time}",
+            f"\nUUID Token:\n{str(token_uuid)[:8]}...",
             f"\nNode ID:\n{self.node_id}",
             f"\nVector Clock:\n[{vector_text}]"
         ]
@@ -168,9 +176,9 @@ class TerminalUI:
         return kb
 
     def update_status(self, status, is_holding):
-
-        self.status_text = status
-        self.is_holding = is_holding
+        with self._lock:
+            self.status_text = status
+            self.is_holding = is_holding
 
         self.app.invalidate()
 
@@ -180,10 +188,10 @@ class TerminalUI:
         token_uuid,
         vector_clock
     ):
-
-        self.lamport_time = lamport_time
-        self.token_uuid = token_uuid
-        self.vector_clock = list(vector_clock)
+        with self._lock:
+            self.lamport_time = lamport_time
+            self.token_uuid = token_uuid
+            self.vector_clock = list(vector_clock)
 
         self.app.invalidate()
 
