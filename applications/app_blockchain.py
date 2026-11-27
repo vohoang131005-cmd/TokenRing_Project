@@ -49,8 +49,10 @@ def add_block(node_id, transaction_data):
     
     chain.append(new_block)
     
-    # 4. Ghi lại toàn bộ chuỗi vào file
-    with open(file_path, "w", encoding="utf-8") as f:
+    # 4. Ghi lại toàn bộ chuỗi vào file an toàn
+    tmp_path = file_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(chain, f, ensure_ascii=False, indent=4)
+    os.replace(tmp_path, file_path)
         
     log(node_id, f"Đã đào xong Block {block_id}. Hash: {current_hash[:10]}...", "SUCCESS")

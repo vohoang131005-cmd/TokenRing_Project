@@ -19,6 +19,9 @@ class Watchdog:
 
     def run(self):
         while self.running:
+            if getattr(self.node, "is_frozen", False):
+                time.sleep(1)
+                continue
             if self.start_time is not None:
                 elapsed = time.time() - self.start_time
                 # Đếm ngược 30 giây

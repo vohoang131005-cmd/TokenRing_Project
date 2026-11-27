@@ -14,7 +14,6 @@ from core.critical_section import access_critical_section
 from fault_tolerance.watchdog import Watchdog
 from fault_tolerance.token_lost import TokenLostDetector
 from fault_tolerance.token_duplicate import resolve_token_conflict
-from fault_tolerance.bypass import handle_bypass
 from fault_tolerance.membership import send_join_request, handle_join_request
 
 # Import các module Distributed Properties
@@ -56,6 +55,7 @@ class Node:
         self._last_status_time = 0
         self._last_status_lamport = -1
         self._has_created_token = False
+        self._joined_existing_ring = False
         self._send_lock = threading.RLock()
         self._status_lock = threading.Lock()
 
@@ -73,6 +73,18 @@ class Node:
 
         self.luu_clock()
 
+    def _safe_write_json(self, file_tam, file_chinh, du_lieu):
+        with open(file_tam, "w", encoding="utf-8") as f:
+            json.dump(du_lieu, f, ensure_ascii=False)
+        for attempt in range(5):
+            try:
+                os.replace(file_tam, file_chinh)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05)
+
     def luu_clock(self):
         try:
             du_lieu = {
@@ -82,9 +94,7 @@ class Node:
                 "updated_at": time.time()
             }
             file_tam = self.clock_file + ".tmp"
-            with open(file_tam, "w", encoding="utf-8") as f:
-                json.dump(du_lieu, f, ensure_ascii=False)
-            os.replace(file_tam, self.clock_file)
+            self._safe_write_json(file_tam, self.clock_file, du_lieu)
         except Exception as e:
             logger.log(self.node_id, f"Loi luu Clock: {e}", "WARNING")
 
@@ -97,10 +107,7 @@ class Node:
             }
             file_tam = os.path.join(self.shared_dir, f"token_status_{self.node_id}.tmp")
             file_chinh = os.path.join(self.shared_dir, "token_status.json")
-
-            with open(file_tam, "w", encoding="utf-8") as f:
-                json.dump(du_lieu, f, ensure_ascii=False)
-            os.replace(file_tam, file_chinh)
+            self._safe_write_json(file_tam, file_chinh, du_lieu)
         except Exception as e:
             logger.log(self.node_id, f"Loi cap nhat trang thai Token: {e}", "WARNING")
 
@@ -122,11 +129,19 @@ class Node:
 
         if self.node_id != 0:
             send_join_request(self.node_id, TOTAL_NODES)
+        else:
+            def _node0_join_or_init():
+                if send_join_request(0, TOTAL_NODES):
+                    self._joined_existing_ring = True
 
-        if self.node_id == 0:
-            threading.Timer(5.0, self.send_token).start()
+            threading.Thread(target=_node0_join_or_init, daemon=True).start()
+            threading.Timer(5.0, self._send_initial_token).start()
 
         self.ui.run()
+
+    def _send_initial_token(self):
+        if not self._joined_existing_ring and not self.is_frozen:
+            self.send_token()
 
     def process_packet(self, packet):
         if self.is_frozen:
@@ -249,6 +264,10 @@ class Node:
                 self.send_token()
 
     def release_token(self):
+        if self.is_frozen:
+            self.watchdog.stop_timer()
+            self.is_holding_token = False
+            return
         if self.is_holding_token:
             self.watchdog.stop_timer()
             self.is_holding_token = False

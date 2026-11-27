@@ -51,13 +51,15 @@ def vote(node_id, candidate):
     # Cong them phieu
     du_lieu_tong[candidate] += 1
 
-    with open(file_tong, "w", encoding="utf-8") as f:
+    file_tong_tam = file_tong + ".tmp"
+    with open(file_tong_tam, "w", encoding="utf-8") as f:
         json.dump(
             du_lieu_tong,
             f,
             ensure_ascii=False,
             indent=4
         )
+    os.replace(file_tong_tam, file_tong)
 
     # Doc lich su vote cua Node
     lich_su = []
@@ -82,13 +84,15 @@ def vote(node_id, candidate):
 
     lich_su.append(lan_vote)
 
-    with open(file_rieng, "w", encoding="utf-8") as f:
+    file_rieng_tam = file_rieng + ".tmp"
+    with open(file_rieng_tam, "w", encoding="utf-8") as f:
         json.dump(
             lich_su,
             f,
             ensure_ascii=False,
             indent=4
         )
+    os.replace(file_rieng_tam, file_rieng)
 
     log(
         node_id,
