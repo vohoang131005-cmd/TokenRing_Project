@@ -27,6 +27,8 @@ shared_data/token_status.json
 shared_data/clock_node_*.json
 shared_data/node_data/
 shared_data/vote_history/
+shared_data/game_history/
+shared_data/game_results.json
 
 # Bieu do benchmark tu dong tao
 benchmark/charts/

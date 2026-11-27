@@ -145,19 +145,19 @@ class Node:
             self._has_created_token = False
             self.token_lost_detector.reset()
             
+            # Cập nhật lại UI khi có node join
+            self.ui.update_status("DANG DOI TOKEN...", False)
+            
             broadcast_status(self.node_id, self.node_id)
             return
 
         if packet_type == "STATUS_UPDATE":
             holder = packet["token_holder"]
-            timestamp = packet.get("timestamp", 0)
 
+            # Chỉ kiểm tra xem holder có thay đổi không, bỏ qua timestamp
             if self._last_holder == holder:
                 return
-            if timestamp <= self._last_status_time:
-                return
 
-            self._last_status_time = timestamp
             self._last_holder = holder
 
             if holder == self.node_id:
@@ -204,8 +204,7 @@ class Node:
                         self.is_frozen = True
                         logger.log(self.node_id, "GIA LAP MAY BI TREO CUNG!", "ERROR")
                         self.ui.update_status("MAY DANG BI TREO CUNG...", False)
-                        while True:
-                            time.sleep(1)
+                        break
 
                     elif data.strip().upper().startswith("VOTE"):
                         parts = data.strip().upper().split()
@@ -234,8 +233,11 @@ class Node:
                     else:
                         write_shared_file(self.node_id, data)
 
-                if self.is_holding_token:
+                # ĐÃ SỬA: Thêm điều kiện not self.is_frozen
+                if self.is_holding_token and not self.is_frozen:
                     self.release_token()
+                elif self.is_frozen:
+                    logger.log(self.node_id, "Node dang treo, Watchdog se thu hoi Token sau 30s...", "WARNING")
             else:
                 self.send_token()
 
@@ -248,14 +250,13 @@ class Node:
             self.send_token()
 
     def send_token(self):
-        """Gửi Token cho máy kế tiếp (Có xử lý Bypass an toàn)"""
         if self.is_holding_token:
             return
 
         time.sleep(TOKEN_SPEED)
 
-        # Thử gửi Token cho next_node hiện tại
         success = False
+        # Thử gửi 3 lần
         for attempt in range(3):
             self.token["lamport_time"] = self.lamport.tick()
             self.token["vector_clock"] = self.vector_clock.tick()
@@ -265,15 +266,15 @@ class Node:
             success = send_packet(self.node_id, self.next_node, self.token)
             if success:
                 logger.log(self.node_id, f"Da gui Token toi Node {self.next_node}.", "INFO")
-                return  # Gửi thành công, thoát hàm
+                return
 
-            logger.log(self.node_id, f"Gui Token that bai lan {attempt+1}", "WARNING")
+            logger.log(self.node_id, f"Gui Token that bai lan {attempt+1} toi Node {self.next_node}", "WARNING")
             time.sleep(1)
 
         # Nếu thất bại 3 lần -> Bypass
         logger.log(self.node_id, f"Node {self.next_node} sap! Kich hoat Bypass...", "ERROR")
         
-        # Tính toán node mới (bỏ qua node sập)
+        # Cập nhật next_node sang node kế tiếp
         self.next_node = (self.next_node + 1) % TOTAL_NODES
         
         # Cập nhật trạng thái
@@ -282,8 +283,8 @@ class Node:
         broadcast_status(self.node_id, self.next_node)
         self.ui.update_status(f"DANG DOI TOKEN (Token o Node {self.next_node})", False)
 
-        # Thử gửi lại cho node mới (không gọi đệ quy để tránh stack overflow)
-        time.sleep(TOKEN_SPEED)
+        # Thử gửi lại cho node mới
+        time.sleep(0.5)
         self.token["lamport_time"] = self.lamport.tick()
         self.token["vector_clock"] = self.vector_clock.tick()
         self.token["holder_id"] = self.next_node
@@ -293,22 +294,10 @@ class Node:
         if success_retry:
             logger.log(self.node_id, f"Bypass thanh cong! Da gui Token toi Node {self.next_node}.", "SUCCESS")
         else:
-            # Nếu vẫn thất bại, thử bypass tiếp (đệ quy có giới hạn)
-            logger.log(self.node_id, f"Van khong gui duoc toi Node {self.next_node}. Thu bypass tiep...", "ERROR")
-            
-            # Giới hạn số lần bypass để tránh đệ quy vô hạn
-            if not hasattr(self, '_bypass_attempts'):
-                self._bypass_attempts = 0
-            
-            self._bypass_attempts += 1
-            
-            if self._bypass_attempts >= TOTAL_NODES:
-                logger.log(self.node_id, "Da thu tat ca cac Node, khong the gui Token!", "ERROR")
-                self._bypass_attempts = 0
-                return
-            
+            logger.log(self.node_id, f"Van khong gui duoc toi Node {self.next_node}. Tiep tuc Bypass...", "ERROR")
+            self.next_node = (self.next_node + 1) % TOTAL_NODES
+            self.token_lost_detector.reset() 
             self.send_token()
-            self._bypass_attempts = 0
 
 
 if __name__ == "__main__":
