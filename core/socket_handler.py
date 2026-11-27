@@ -1,48 +1,75 @@
 # core/socket_handler.py
 import socket
 import json
+import threading
 import time
 from config import HOSTS, PORTS, SOCKET_TIMEOUT, TOTAL_NODES
 from utils.logger import log
 
+
 def send_packet(node_id, to_node_id, packet):
+    client = None
     try:
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client.settimeout(SOCKET_TIMEOUT)
         client.connect((HOSTS[to_node_id], PORTS[to_node_id]))
-        client.sendall(json.dumps(packet).encode('utf-8'))
-        client.close()
+        data = json.dumps(packet).encode("utf-8")
+        client.sendall(data)
+        client.shutdown(socket.SHUT_WR)
         return True
     except Exception:
         return False
+    finally:
+        if client:
+            client.close()
+
 
 def broadcast_status(sender_id, current_token_holder):
-    """Gửi thông báo trạng thái cho tất cả các máy"""
-    packet = {"type": "STATUS_UPDATE", "token_holder": current_token_holder}
+    # Thêm timestamp vào gói tin để chống nhảy loạn
+    packet = {
+        "type": "STATUS_UPDATE",
+        "token_holder": current_token_holder,
+        "sender_id": sender_id,
+        "timestamp": time.time()  # <-- THÊM DÒNG NÀY
+    }
+
     for i in range(TOTAL_NODES):
-        if i != sender_id: # Không gửi cho chính mình
-            try:
-                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                client.settimeout(0.1) 
-                client.connect((HOSTS[i], PORTS[i]))
-                client.sendall(json.dumps(packet).encode('utf-8'))
-                client.close()
-                time.sleep(0.05) # Giãn cách thời gian gửi để tránh dồn ứ
-            except: 
-                pass
+        if i == sender_id:
+            continue
+        try:
+            send_packet(sender_id, i, packet)
+        except Exception:
+            pass
+
+
+def handle_connection(conn, addr, callback, node_id):
+    try:
+        conn.settimeout(SOCKET_TIMEOUT)
+        chunks = []
+        while True:
+            data = conn.recv(4096)
+            if not data:
+                break
+            chunks.append(data)
+        if chunks:
+            packet_data = b"".join(chunks)
+            packet = json.loads(packet_data.decode("utf-8"))
+            threading.Thread(target=callback, args=(packet,), daemon=True).start()
+    except Exception as e:
+        log(node_id, f"Loi nhan goi tin tu {addr}: {e}", "ERROR")
+    finally:
+        conn.close()
+
 
 def start_server(node_id, callback):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(('0.0.0.0', PORTS[node_id]))
-    server.listen(5)
-    log(node_id, f"Đang lắng nghe tại port {PORTS[node_id]}...", "SUCCESS")
+    server.bind(("0.0.0.0", PORTS[node_id]))
+    server.listen(50)
+    log(node_id, f"Dang lang nghe tai port {PORTS[node_id]}...", "SUCCESS")
     while True:
         try:
             conn, addr = server.accept()
-            data = conn.recv(4096).decode('utf-8')
-            conn.close()
-            if data: 
-                callback(json.loads(data))
-        except: 
-            pass
+            threading.Thread(target=handle_connection, args=(conn, addr, callback, node_id), daemon=True).start()
+        except Exception as e:
+            log(node_id, f"Loi server: {e}", "ERROR")
