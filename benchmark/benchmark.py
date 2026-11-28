@@ -1,44 +1,83 @@
 # benchmark/benchmark.py
-import time
 import os
+import re
 import matplotlib.pyplot as plt
-# from utils.logger import log
+
 def run_benchmark():
-    """Hàm giả lập đo lường hiệu năng"""
-    os.makedirs("benchmark/charts", exist_ok=True)
+    """Đọc log thực tế từ Node 0 và vẽ biểu đồ Latency"""
+    log_file = os.path.join("logs", "node_0.log")
     
-    print("--- BẮT ĐẦU BENCHMARK ---")
-    so_request = 100
-    thoi_gian_cho = []
-    
-    # Giả lập thời gian xử lý trung bình của Token Ring (dựa trên sleep 2s)
-    for i in range(1, so_request + 1):
-        # Thời gian Token quay 1 vòng (giả lập) + thời gian ghi file (2s)
-        latency = 2.0 + (i * 0.01) # Giả lập độ trễ tăng dần
-        thoi_gian_cho.append(latency)
-        
-    total_time = sum(thoi_gian_cho)
-    throughput = so_request / total_time # Số request/giây
-    
-    print(f"Tổng số request: {so_request}")
-    print(f"Tổng thời gian: {total_time:.2f} giây")
-    print(f"Throughput (Requests/giây): {throughput:.2f}")
-    print(f"Latency trung bình: {total_time/so_request:.4f} giây")
-    
+    if not os.path.exists(log_file):
+        print(f"Không tìm thấy file log: {log_file}")
+        print("Hãy chạy hệ thống trước để tạo log (bật 6 Node và thực hiện vài vòng Token).")
+        return
+
+    start_times = []
+    end_times = []
+    latencies = []
+
+    # Đọc file log và trích xuất timestamp
+    # Sử dụng errors="ignore" để bỏ qua các ký tự lỗi font
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if "BENCHMARK_START:" in line:
+                    match = re.search(r"BENCHMARK_START:([\d.]+)", line)
+                    if match:
+                        start_times.append(float(match.group(1)))
+                elif "BENCHMARK_END:" in line:
+                    match = re.search(r"BENCHMARK_END:([\d.]+)", line)
+                    if match:
+                        end_times.append(float(match.group(1)))
+    except Exception as e:
+        print(f"Lỗi khi đọc file log: {e}")
+        return
+
+    # Tính latency cho từng cặp start-end
+    min_len = min(len(start_times), len(end_times))
+    for i in range(min_len):
+        latency = end_times[i] - start_times[i]
+        if latency > 0:  # Chỉ lấy latency dương
+            latencies.append(latency)
+
+    if not latencies:
+        print("Chưa có dữ liệu Latency. Hãy chạy hệ thống và thực hiện vài vòng Token.")
+        return
+
+    # Lấy đường dẫn tuyệt đối của thư mục chứa file benchmark.py
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    charts_dir = os.path.join(current_dir, "charts")
+    os.makedirs(charts_dir, exist_ok=True)
+
     # Vẽ biểu đồ
-    plt.figure(figsize=(10, 5))
-    plt.plot(range(1, so_request + 1), thoi_gian_cho, marker='o', linestyle='-', color='b')
-    plt.title('Biểu đồ Latency (Thời gian chờ) của Token Ring')
-    plt.xlabel('Số thứ tự Request')
-    plt.ylabel('Thời gian chờ (giây)')
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, len(latencies) + 1), latencies, 
+             marker='o', linestyle='-', color='r', label='Latency thực tế')
+    
+    plt.title('Biểu đồ Latency thực tế của Token Ring', fontsize=14)
+    plt.xlabel('Số vòng', fontsize=12)
+    plt.ylabel('Thời gian (giây)', fontsize=12)
     plt.grid(True)
+    plt.legend()
     
-    chart_path = "benchmark/charts/latency_chart.png"
-    plt.savefig(chart_path)
-    plt.close()
+    chart_path = os.path.join(charts_dir, "real_latency_chart.png")
     
-    print(f"Đã lưu biểu đồ tại: {chart_path}")
-    print("--- KẾT THÚC BENCHMARK ---")
+    try:
+        plt.savefig(chart_path)
+        print(f"Đã lưu biểu đồ thực tế tại: {chart_path}")
+    except Exception as e:
+        print(f"Lỗi khi lưu biểu đồ: {e}")
+    finally:
+        plt.close()
+    
+    print("=" * 60)
+    print("KẾT QUẢ ĐO LATENCY THỰC TẾ")
+    print("=" * 60)
+    print(f"Số vòng đo được: {len(latencies)}")
+    print(f"Latency trung bình: {sum(latencies)/len(latencies):.4f} giây")
+    print(f"Latency cao nhất: {max(latencies):.4f} giây")
+    print(f"Latency thấp nhất: {min(latencies):.4f} giây")
+    print("=" * 60)
 
 if __name__ == "__main__":
     run_benchmark()

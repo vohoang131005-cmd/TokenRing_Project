@@ -185,6 +185,10 @@ class Node:
             return
 
         if packet_type == "TOKEN":
+            # --- ĐO THỜI GIAN THỰC TẾ KHI TOKEN QUAY LẠI NODE 0 ---
+            if self.node_id == 0:
+                logger.log(self.node_id, f"BENCHMARK_END:{time.time()}", "INFO")
+            
             resolved_token = resolve_token_conflict(self.node_id, self.token, packet)
             if resolved_token is None:
                 return
@@ -282,6 +286,10 @@ class Node:
                 return
 
             time.sleep(TOKEN_SPEED)
+
+            # --- ĐO THỜI GIAN THỰC TẾ KHI TOKEN RỜI NODE 0 ---
+            if self.node_id == 0:
+                logger.log(self.node_id, f"BENCHMARK_START:{time.time()}", "INFO")
 
             # Thử gửi Token cho next_node hiện tại
             for attempt in range(3):
